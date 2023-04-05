@@ -1,0 +1,133 @@
+
+server:
+  enabled: true
+  replicas: 2
+  storage: 20Gi
+  storageClass: gp3
+
+  resources:
+    requests:
+      memory: "100Mi"
+      cpu: "80m"
+    limits:
+      memory: "100Mi"
+      cpu: "100m"
+
+  affinity: |
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: role
+            operator: In
+            values:
+            - ops
+
+  tolerations: |
+    - key: role
+      operator: Equal
+      value: ops
+      effect: NoSchedule
+
+client:
+  enabled: true
+  resources:
+    requests:
+      memory: "100Mi"
+      cpu: "20m"
+    limits:
+      memory: "100Mi"
+      cpu: "100m"
+
+  extraConfig: |
+    {
+      "log_level": "DEBUG"
+    }
+
+  affinity: |
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: role
+            operator: In
+            values:
+            - ops
+  
+  tolerations: |
+    - key: role
+      operator: Equal
+      value: ops
+      effect: NoSchedule
+
+dns:
+  enabled: true
+
+ui:
+  enabled: true
+
+  ingress:
+    enabled: true
+    hosts:
+    - host: consul.dev.cloudplex.me
+      paths:
+      - /
+    annotations: |
+      kubernetes.io/ingress.class: alb
+      alb.ingress.kubernetes.io/load-balancer-name: consul-dev
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/subnets: subnet-07be61ef12c3893cc, subnet-018b389e4f0d18fe1
+      alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-2:179248873946:certificate/33172fc4-c250-455a-9ac3-4ea8d9084b1e
+      alb.ingress.kubernetes.io/backend-protocol: HTTP
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/ssl-redirect: '443'
+  metrics:
+    enabled: false
+    # enabled: true
+    provider: "prometheus"
+    baseURL: http://prometheus-release-prometheus.prometheus.svc.cluster.local:9090
+
+connectInject:
+  resources:
+    requests:
+      memory: 60Mi
+      cpu: 10m
+    limits:
+      memory: 100Mi
+      cpu: 50m
+
+  affinity: |
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: role
+            operator: In
+            values:
+            - ops
+
+  tolerations: |
+    - key: role
+      operator: Equal
+      value: ops
+      effect: NoSchedule
+
+webhookCertManager:
+  # @type: string
+  # tolerations: null
+  tolerations: |
+    - key: role
+      operator: Equal
+      value: ops
+      effect: NoSchedule
+
+  # This value defines [`nodeSelector`](https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector)
+  # Example:
+  #
+  # ```yaml
+  # nodeSelector: |
+  #   beta.kubernetes.io/arch: amd64
+  # ```
+  nodeSelector: |
+    role: ops

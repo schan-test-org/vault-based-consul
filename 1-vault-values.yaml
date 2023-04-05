@@ -1,0 +1,926 @@
+global:
+  # enabled is the master enabled switch. Setting this to true or false
+  # will enable or disable all the components within this chart by default.
+  enabled: true
+  imagePullSecrets: []
+  tlsDisable: true
+  externalVaultAddr: ""
+  # If deploying to OpenShift
+  openshift: false
+
+  # Create PodSecurityPolicy for pods
+  psp:
+    enable: false
+    annotations: |
+      seccomp.security.alpha.kubernetes.io/allowedProfileNames: docker/default,runtime/default
+      apparmor.security.beta.kubernetes.io/allowedProfileNames: runtime/default
+      seccomp.security.alpha.kubernetes.io/defaultProfileName:  runtime/default
+      apparmor.security.beta.kubernetes.io/defaultProfileName:  runtime/default
+
+  serverTelemetry:
+    prometheusOperator: false
+
+injector:
+  # True if you want to enable vault agent injection.
+  # @default: global.enabled
+  enabled: "-"
+  replicas: 1
+  port: 8080
+  leaderElector:
+    enabled: true
+  metrics:
+    enabled: false
+  # Deprecated: Please use global.externalVaultAddr instead.
+  externalVaultAddr: ""
+
+  # image sets the repo and tag of the vault-k8s image to use for the injector.
+  image:
+    repository: "hashicorp/vault-k8s"
+    # tag: "1.1.0"
+    pullPolicy: IfNotPresent
+    
+  agentImage:
+    repository: "hashicorp/vault"
+    # tag: "1.12.1"
+
+  # Affinity Settings for injector pods
+  # This can either be a multi-line string or YAML matching the PodSpec's affinity field.
+  # Commenting out or setting as empty the affinity variable, will allow
+  # deployment of multiple replicas to single node services such as Minikube.
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ template "vault.name" . }}-agent-injector
+              app.kubernetes.io/instance: "{{ .Release.Name }}"
+              component: webhook
+          topologyKey: kubernetes.io/hostname
+
+  # Topology settings for injector pods
+  # ref: https://kubernetes.io/docs/concepts/workloads/pods/pod-topology-spread-constraints/
+  topologySpreadConstraints: []
+  # tolerations: []
+  tolerations: |
+    - key: role
+      operator: Equal
+      value: ops
+      effect: NoSchedule
+
+  # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
+  # Example:
+  # nodeSelector:
+  #   beta.kubernetes.io/arch: amd64
+  # nodeSelector: {}
+  nodeSelector:
+    role: ops
+
+  # Priority class for injector pods
+  priorityClassName: ""
+  annotations: {}
+  extraLabels: {}
+
+  # Should the injector pods run on the host network (useful when using
+  # an alternate CNI in EKS)
+  hostNetwork: false
+
+  # Injector service specific config
+  service:
+    # Extra annotations to attach to the injector service
+    annotations: {}
+
+  # Injector serviceAccount specific config
+  serviceAccount:
+    # Extra annotations to attach to the injector serviceAccount
+    annotations: {}
+
+  # A disruption budget limits the number of pods of a replicated application
+  # that are down simultaneously from voluntary disruptions
+  podDisruptionBudget: {}
+  # podDisruptionBudget:
+  #   maxUnavailable: 1
+
+  # strategy for updating the deployment. This can be a multi-line string or a
+  # YAML map.
+  strategy: {}
+  # strategy: |
+  #   rollingUpdate:
+  #     maxSurge: 25%
+  #     maxUnavailable: 25%
+  #   type: RollingUpdate
+
+  # The default values for the injected Vault Agent containers.
+  agentDefaults:
+    # For more information on configuring resources, see the K8s documentation:
+    # https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+    cpuLimit: "500m"
+    cpuRequest: "250m"
+    memLimit: "128Mi"
+    memRequest: "64Mi"
+
+    # Default template type for secrets when no custom template is specified.
+    template: "map"
+
+    # Default values within Agent's template_config stanza.
+    templateConfig:
+      exitOnRetryFailure: true
+      staticSecretRenderInterval: ""
+
+###########
+  # Used to define custom livenessProbe settings
+  livenessProbe:
+    # When a probe fails, Kubernetes will try failureThreshold times before giving up
+    failureThreshold: 2
+    initialDelaySeconds: 5
+    periodSeconds: 2
+    successThreshold: 1
+    timeoutSeconds: 5
+  # Used to define custom readinessProbe settings
+  readinessProbe:
+    failureThreshold: 2
+    initialDelaySeconds: 5
+    periodSeconds: 2
+    successThreshold: 1
+    timeoutSeconds: 5
+  # Used to define custom startupProbe settings
+  startupProbe:
+    failureThreshold: 12
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 5
+
+#####
+  # Mount Path of the Vault Kubernetes Auth Method.
+  authPath: "auth/kubernetes"
+  logLevel: "info"
+  logFormat: "standard"
+  # Configures all Vault Agent sidecars to revoke their token when shutting down
+  revokeOnShutdown: false
+
+  webhook:
+    # To block pod creation while the webhook is unavailable, set the policy to `Fail` below.
+    # See https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#failure-policy
+    #
+    failurePolicy: Ignore
+
+    # See https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#matching-requests-matchpolicy
+    matchPolicy: Exact
+
+    # If it is ignored or fails depends on the failurePolicy
+    # See https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#timeouts
+    timeoutSeconds: 30
+
+    # namespaceSelector is the selector for restricting the webhook to only
+    # See https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#matching-requests-namespaceselector
+    # Example:
+    # namespaceSelector:
+    #    matchLabels:
+    #      sidecar-injector: enabled
+    namespaceSelector: {}
+
+    # See https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#matching-requests-objectselector
+    # for more details.
+    # Example:
+    # objectSelector:
+    #    matchLabels:
+    #      vault-sidecar-injector: enabled
+    objectSelector: |
+      matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values:
+        - {{ template "vault.name" . }}-agent-injector
+
+    annotations: {}
+
+  # Deprecated: please use 'webhook.failurePolicy' instead
+  # To block pod creation while webhook is unavailable, set the policy to `Fail` below.
+  # See https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#failure-policy
+  #
+  failurePolicy: Ignore
+
+  # Deprecated: please use 'webhook.namespaceSelector' instead
+  # See https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#matching-requests-namespaceselector
+  # for more details.
+  # Example:
+  # namespaceSelector:
+  #    matchLabels:
+  #      sidecar-injector: enabled
+  namespaceSelector: {}
+
+  # Deprecated: please use 'webhook.objectSelector' instead.
+  # See https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#matching-requests-objectselector
+  # for more details.
+  # Example:
+  # objectSelector:
+  #    matchLabels:
+  #      vault-sidecar-injector: enabled
+  objectSelector: {}
+
+  # Deprecated: please use 'webhook.annotations' instead
+  # Extra annotations to attach to the webhook
+  webhookAnnotations: {}
+
+  certs:
+    secretName: null
+    caBundle: ""
+    certName: tls.crt
+    keyName: tls.key
+
+  # Security context for the pod template and the injector container
+  # The default pod securityContext is:
+  #   runAsNonRoot: true
+  #   runAsGroup: {{ .Values.injector.gid | default 1000 }}
+  #   runAsUser: {{ .Values.injector.uid | default 100 }}
+  #   fsGroup: {{ .Values.injector.gid | default 1000 }}
+  # and for container is
+  #    allowPrivilegeEscalation: false
+  #    capabilities:
+  #      drop:
+  #        - ALL
+  securityContext:
+    pod: {}
+    container: {}
+
+  resources: {}
+  # resources:
+  #   requests:
+  #     memory: 256Mi
+  #     cpu: 250m
+  #   limits:
+  #     memory: 256Mi
+  #     cpu: 250m
+
+  # extraEnvironmentVars is a list of extra environment variables to set in the
+  # injector deployment.
+  extraEnvironmentVars: {}
+    # KUBERNETES_SERVICE_HOST: kubernetes.default.svc
+
+#######
+server:
+  # If true, or "-" with global.enabled true, Vault server will be installed.
+  # See vault.mode in _helpers.tpl for implementation details.
+  enabled: "-"
+
+  enterpriseLicense:
+    secretName: ""
+    secretKey: "license"
+
+  image:
+    repository: "hashicorp/vault"
+    # tag: "1.12.1"
+    # Overrides the default Image Pull Policy
+    pullPolicy: IfNotPresent
+
+  # Configure the Update Strategy Type for the StatefulSet
+  # See https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#update-strategies
+  updateStrategyType: "OnDelete"
+  logLevel: ""
+  logFormat: ""
+
+  resources: {}
+  # resources:
+  #   requests:
+  #     memory: 256Mi
+  #     cpu: 250m
+  #   limits:
+  #     memory: 256Mi
+  #     cpu: 250m
+############
+  ingress:
+    enabled: false
+    # enabled: true
+    labels: {}
+      # traffic: external
+    # annotations:
+    #   kubernetes.io/ingress.class: alb
+    #   alb.ingress.kubernetes.io/load-balancer-name: vault-dev
+    #   alb.ingress.kubernetes.io/scheme: internet-facing
+    #   alb.ingress.kubernetes.io/target-type: ip
+    #   alb.ingress.kubernetes.io/subnets: subnet-0fbc809bfc2f2760e, subnet-09ab27b079a2aa375
+    #   alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-2:524542846721:certificate/bb52c420-ccac-415c-9d51-8b42417bc886
+    #   alb.ingress.kubernetes.io/backend-protocol: HTTP
+    #   alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    #   alb.ingress.kubernetes.io/ssl-redirect: '443'
+    # pathType: Prefix
+    # hosts:
+    #   - host: vault.supk.xyz
+    #     paths:
+    #     - /
+#################
+    # # Optionally use ingressClassName instead of deprecated annotation.
+    # # See: https://kubernetes.io/docs/concepts/services-networking/ingress/#deprecated-annotation
+    # # See: https://kubernetes.io/docs/concepts/services-networking/ingress/#path-types for other possible values.
+    # ingressClassName: "nginx"
+
+    # annotations: |
+    #   service.beta.kubernetes.io/aws-load-balancer-name: vault-ngx
+    #   service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    #   service.beta.kubernetes.io/aws-load-balancer-type: nlb-ip
+    #   service.beta.kubernetes.io/aws-load-balancer-backend-protocol: tcp
+    #   service.beta.kubernetes.io/aws-load-balancer-attributes: load_balancing.cross_zone.enabled=true
+    #   service.beta.kubernetes.io/aws-load-balancer-subnets: subnet-0fbc809bfc2f2760e, subnet-09ab27b079a2aa375
+    #   service.beta.kubernetes.io/aws-load-balancer-ssl-cert: arn:aws:acm:ap-northeast-2:524542846721:certificate/bb52c420-ccac-415c-9d51-8b42417bc886
+    #   service.beta.kubernetes.io/aws-load-balancer-backend-protocol: http
+    #   service.beta.kubernetes.io/aws-load-balancer-ssl-ports: https
+
+    # pathType: Prefix
+    # activeService: true
+    # hosts:
+    #   - host: vault.supk.xyz
+    #     paths: /
+
+    ## Extra paths to prepend to the host configuration. This is useful when working with annotation based services.
+    # extraPaths: []
+    # - path: /*
+    #   backend:
+    #     service:
+    #       name: ssl-redirect
+    #       port:
+    #         number: use-annotation
+    # tls: []
+    #  - secretName: chart-example-tls
+    #    hosts:
+    #      - chart-example.local
+#################
+
+  # OpenShift only - create a route to expose the service
+  # By default the created route will be of type passthrough
+  # route:
+  #   enabled: false
+  #   activeService: true
+
+  #   labels: {}
+  #   annotations: {}
+  #   host: chart-example.local
+  #   tls:
+  #     termination: passthrough
+
+  # # authDelegator enables a cluster role binding to be attached to the service
+  # # account.  This cluster role binding can be used to setup Kubernetes auth
+  # # method.  https://www.vaultproject.io/docs/auth/kubernetes.html
+  # authDelegator:
+  #   enabled: true
+  # extraInitContainers: null
+    # # This example installs a plugin pulled from github into the /usr/local/libexec/vault/oauthapp folder,
+    # # which is defined in the volumes value.
+    # - name: oauthapp
+    #   image: "alpine"
+    #   command: [sh, -c]
+    #   args:
+    #     - cd /tmp &&
+    #       wget https://github.com/puppetlabs/vault-plugin-secrets-oauthapp/releases/download/v1.2.0/vault-plugin-secrets-oauthapp-v1.2.0-linux-amd64.tar.xz -O oauthapp.xz &&
+    #       tar -xf oauthapp.xz &&
+    #       mv vault-plugin-secrets-oauthapp-v1.2.0-linux-amd64 /usr/local/libexec/vault/oauthapp &&
+    #       chmod +x /usr/local/libexec/vault/oauthapp
+    #   volumeMounts:
+    #     - name: plugins
+    #       mountPath: /usr/local/libexec/vault
+
+######
+  # extraContainers is a list of sidecar containers. Specified as a YAML list.
+  extraContainers: null
+  shareProcessNamespace: false
+  extraArgs: ""
+  extraPorts: null
+    # - containerPort: 8300
+    #   name: http-monitoring
+
+  # Used to define custom readinessProbe settings
+  readinessProbe:
+    enabled: true
+    # When a probe fails, Kubernetes will try failureThreshold times before giving up
+    failureThreshold: 2
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 3
+  # Used to enable a livenessProbe for the pods
+  livenessProbe:
+    enabled: false
+    path: "/v1/sys/health?standbyok=true"
+    # When a probe fails, Kubernetes will try failureThreshold times before giving up
+    failureThreshold: 2
+    initialDelaySeconds: 60
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 3
+
+  # Optional duration in seconds the pod needs to terminate gracefully.
+  # See: https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/
+  terminationGracePeriodSeconds: 10
+  preStopSleepSeconds: 5
+  postStart: []
+  # - /bin/sh
+  # - -c
+  # - /vault/userconfig/myscript/run.sh
+  extraEnvironmentVars: {}
+    # GOOGLE_REGION: global
+    # GOOGLE_PROJECT: myproject
+    # GOOGLE_APPLICATION_CREDENTIALS: /vault/userconfig/myproject/myproject-creds.json
+
+  # extraSecretEnvironmentVars is a list of extra environment variables to set with the stateful set.
+  # These variables take value from existing Secret objects.
+  extraSecretEnvironmentVars: []
+    # - envName: AWS_SECRET_ACCESS_KEY
+    #   secretName: vault
+    #   secretKey: AWS_SECRET_ACCESS_KEY
+
+  # Deprecated: please use 'volumes' instead.
+  extraVolumes: []
+    # - type: secret (or "configMap")
+    #   name: my-secret
+    #   path: null # default is `/vault/userconfig`
+
+  volumes: null
+  #   - name: plugins
+  #     emptyDir: {}
+
+  volumeMounts: null
+  #   - mountPath: /usr/local/libexec/vault
+  #     name: plugins
+  #     readOnly: true
+
+  # Affinity Settings
+  # Commenting out or setting as empty the affinity variable, will allow
+  # deployment to single node services such as Minikube
+  # This should be either a multi-line string or YAML matching the PodSpec's affinity field.
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ template "vault.name" . }}
+              app.kubernetes.io/instance: "{{ .Release.Name }}"
+              component: server
+          topologyKey: kubernetes.io/hostname
+
+  # Topology settings for server pods
+  # ref: https://kubernetes.io/docs/concepts/workloads/pods/pod-topology-spread-constraints/
+  # This should be either a multi-line string or YAML matching the topologySpreadConstraints array
+  # in a PodSpec.
+  topologySpreadConstraints: []
+  # Toleration Settings for server pods
+  # tolerations: []
+  tolerations: |
+    - key: role
+      operator: Equal
+      value: ops
+      effect: NoSchedule
+
+  # nodeSelector labels for server pod assignment, formatted as a multi-line string or YAML map.
+  # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
+  # Example:
+  # nodeSelector:
+  #   beta.kubernetes.io/arch: amd64
+  # nodeSelector: {}
+  nodeSelector:
+    role: ops
+
+#########
+  # Enables network policy for server pods
+  networkPolicy:
+    enabled: false
+    egress: []
+    # egress:
+    # - to:
+    #   - ipBlock:
+    #       cidr: 10.0.0.0/24
+    #   ports:
+    #   - protocol: TCP
+    #     port: 443
+
+  # Priority class for server pods
+  priorityClassName: ""
+  extraLabels: {}
+  annotations: {}
+
+  # Enables a headless service to be used by the Vault Statefulset
+  service:
+    enabled: true
+    active:
+      enabled: true
+    standby:
+      enabled: true
+
+    instanceSelector:
+      enabled: true
+    # clusterIP controls whether a Cluster IP address is attached to the
+    # Vault service within Kubernetes.  By default, the Vault service will
+    # be given a Cluster IP address, set to None to disable.  When disabled
+    # Kubernetes will create a "headless" service.  Headless services can be
+    # used to communicate with pods directly through DNS instead of a round-robin
+    # load balancer.
+    # clusterIP: None
+
+    # Configures the service type for the main Vault service.  Can be ClusterIP
+    # or NodePort.
+    #type: ClusterIP
+
+    # Do not wait for pods to be ready
+    publishNotReadyAddresses: true
+    # ref: https://kubernetes.io/docs/concepts/services-networking/service/#external-traffic-policy
+    externalTrafficPolicy: Cluster
+
+    port: 8200
+    targetPort: 8200
+    annotations: {}
+
+  # See https://www.vaultproject.io/docs/configuration/storage/index.html to know more
+  dataStorage:
+    enabled: true
+    size: 10Gi
+    mountPath: "/vault/data"
+    storageClass: null
+    accessMode: ReadWriteOnce
+    annotations: {}
+
+  # See https://www.vaultproject.io/docs/audit/index.html to know more
+  auditStorage:
+    enabled: false
+    size: 10Gi
+    mountPath: "/vault/audit"
+    storageClass: null
+    accessMode: ReadWriteOnce
+    annotations: {}
+
+  # See https://www.vaultproject.io/docs/concepts/dev-server.html to know more
+  dev:
+    enabled: false
+
+    # Set VAULT_DEV_ROOT_TOKEN_ID value
+    devRootToken: "root"
+
+  standalone:
+    enabled: "-"
+
+    # https://www.vaultproject.io/docs/platform/k8s/helm/run#protecting-sensitive-vault-configurations
+    config: |
+      ui = true
+
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+        # Enable unauthenticated metrics access (necessary for Prometheus Operator)
+        #telemetry {
+        #  unauthenticated_metrics_access = "true"
+        #}
+      }
+      storage "file" {
+        path = "/vault/data"
+      }
+
+      # Example configuration for using auto-unseal, using Google Cloud KMS. The
+      # GKMS keys must already exist, and the cluster must have a service account
+      # that is authorized to access GCP KMS.
+      #seal "gcpckms" {
+      #   project     = "vault-helm-dev"
+      #   region      = "global"
+      #   key_ring    = "vault-helm-unseal-kr"
+      #   crypto_key  = "vault-helm-unseal-key"
+      #}
+
+      # Example configuration for enabling Prometheus metrics in your config.
+      #telemetry {
+      #  prometheus_retention_time = "30s"
+      #  disable_hostname = true
+      #}
+
+  # Run Vault in "HA" mode. There are no storage requirements unless the audit log
+  ha:
+    enabled: true
+    replicas: 2
+
+    # Set the api_addr configuration for Vault HA
+    # See https://www.vaultproject.io/docs/configuration#api_addr
+    # If set to null, this will be set to the Pod IP Address
+    apiAddr: null
+    clusterAddr: null
+
+
+    raft:
+      # Enables Raft integrated storage
+      enabled: false
+      setNodeId: false
+      # https://www.vaultproject.io/docs/platform/k8s/helm/run#protecting-sensitive-vault-configurations
+      # config: |
+      #   ui = true
+
+      #   listener "tcp" {
+      #     tls_disable = 1
+      #     address = "[::]:8200"
+      #     cluster_address = "[::]:8201"
+      #     # Enable unauthenticated metrics access (necessary for Prometheus Operator)
+      #     #telemetry {
+      #     #  unauthenticated_metrics_access = "true"
+      #     #}
+      #   }
+
+      #   storage "raft" {
+      #     path = "/vault/data"
+      #   }
+
+      #   service_registration "kubernetes" {}
+
+    # https://www.vaultproject.io/docs/platform/k8s/helm/run#protecting-sensitive-vault-configurations
+    config: |
+      ui = true
+
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      storage "consul" {
+        path = "vault"
+        address = "consul-consul-server:8500"
+      }
+
+      service_registration "kubernetes" {}
+
+      # Example configuration for using auto-unseal, using Google Cloud KMS. The
+      # GKMS keys must already exist, and the cluster must have a service account
+      # that is authorized to access GCP KMS.
+      #seal "gcpckms" {
+      #   project     = "vault-helm-dev-246514"
+      #   region      = "global"
+      #   key_ring    = "vault-helm-unseal-kr"
+      #   crypto_key  = "vault-helm-unseal-key"
+      #}
+
+      # Example configuration for enabling Prometheus metrics.
+      # If you are using Prometheus Operator you can enable a ServiceMonitor resource below.
+      # You may wish to enable unauthenticated metrics in the listener block above.
+      #telemetry {
+      #  prometheus_retention_time = "30s"
+      #  disable_hostname = true
+      #}
+
+    # A disruption budget limits the number of pods of a replicated application
+    # that are down simultaneously from voluntary disruptions
+    disruptionBudget:
+      enabled: true
+      maxUnavailable: null
+
+  # Kubernetes tokens.
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+    extraLabels: {}
+    # See https://developer.hashicorp.com/vault/docs/configuration/service-registration/kubernetes
+    serviceDiscovery:
+      enabled: true
+
+  # Settings for the statefulSet used to run Vault.
+  statefulSet:
+    annotations: {}
+
+    # Set the pod and container security contexts.
+    # If not set, these will default to, and for *not* OpenShift:
+    # pod:
+    #   runAsNonRoot: true
+    #   runAsGroup: {{ .Values.server.gid | default 1000 }}
+    #   runAsUser: {{ .Values.server.uid | default 100 }}
+    #   fsGroup: {{ .Values.server.gid | default 1000 }}
+    # container:
+    #   allowPrivilegeEscalation: false
+    #
+    # If not set, these will default to, and for OpenShift:
+    # pod: {}
+    # container: {}
+    securityContext:
+      pod: {}
+      container: {}
+
+  # Should the server pods run on the host network
+  hostNetwork: false
+
+# secrets-store-csi-driver-provider-vault
+csi:
+  # Requires installing the secrets-store-csi-driver separately, see:
+  # https://github.com/kubernetes-sigs/secrets-store-csi-driver#install-the-secrets-store-csi-driver
+  enabled: false
+  image:
+    repository: "hashicorp/vault-csi-provider"
+    # tag: "1.2.1"
+    pullPolicy: IfNotPresent
+
+  volumes: null
+  # - name: tls
+  #   secret:
+  #     secretName: vault-tls
+
+  volumeMounts: null
+  # - name: tls
+  #   mountPath: "/vault/tls"
+  #   readOnly: true
+
+  resources: {}
+  # resources:
+  #   requests:
+  #     cpu: 50m
+  #     memory: 128Mi
+  #   limits:
+  #     cpu: 50m
+  #     memory: 128Mi
+
+  # Settings for the daemonSet used to run the provider.
+  daemonSet:
+    updateStrategy:
+      type: RollingUpdate
+      maxUnavailable: ""
+    annotations: {}
+    # Provider host path (must match the CSI provider's path)
+    providersDir: "/etc/kubernetes/secrets-store-csi-providers"
+    # Kubelet host path
+    kubeletRootDir: "/var/lib/kubelet"
+    extraLabels: {}
+    # security context for the pod template and container in the csi provider daemonSet
+    securityContext:
+      pod: {}
+      container: {}
+
+  pod:
+    annotations: {}
+    tolerations: []
+    extraLabels: {}
+
+  # Priority class for csi pods
+  priorityClassName: ""
+
+  serviceAccount:
+    annotations: {}
+    extraLabels: {}
+
+  # Used to configure readinessProbe for the pods.
+  readinessProbe:
+    failureThreshold: 2
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 3
+  # Used to configure livenessProbe for the pods.
+  livenessProbe:
+    failureThreshold: 2
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 3
+
+  # Enables debug logging.
+  debug: false
+
+  # See https://www.vaultproject.io/docs/platform/k8s/csi/configurations#command-line-arguments
+  extraArgs: []
+
+# For more information see:
+# https://www.vaultproject.io/docs/configuration/telemetry
+# https://www.vaultproject.io/docs/internals/telemetry
+serverTelemetry:
+  # Enable support for the Prometheus Operator. Currently, this chart does not support
+  # authenticating to Vault's metrics endpoint, so the following `telemetry{}` must be included
+  # in the `listener "tcp"{}` stanza
+  #  telemetry {
+  #    unauthenticated_metrics_access = "true"
+  #  }
+  #
+  # See the `standalone.config` for a more complete example of this.
+  #
+  # In addition, a top level `telemetry{}` stanza must also be included in the Vault configuration:
+  #
+  # example:
+  #  telemetry {
+  #    prometheus_retention_time = "30s"
+  #    disable_hostname = true
+  #  }
+  #
+  # Configuration for monitoring the Vault server.
+  serviceMonitor:
+    # The Prometheus operator *must* be installed before enabling this feature,
+    # if not the chart will fail to install due to missing CustomResourceDefinitions
+    # provided by the operator.
+    #
+    # Instructions on how to install the Helm chart can be found here:
+    #  https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+    # More information can be found here:
+    #  https://github.com/prometheus-operator/prometheus-operator
+    #  https://github.com/prometheus-operator/kube-prometheus
+
+    # Enable deployment of the Vault Server ServiceMonitor CustomResource.
+    enabled: false
+    selectors: {}
+    interval: 30s
+    scrapeTimeout: 10s
+
+  prometheusRules:
+      enabled: false
+      selectors: {}
+      # Some example rules.
+      rules: {}
+      #  - alert: vault-HighResponseTime
+      #    annotations:
+      #      message: The response time of Vault is over 500ms on average over the last 5 minutes.
+      #    expr: vault_core_handle_request{quantile="0.5", namespace="mynamespace"} > 500
+      #    for: 5m
+      #    labels:
+      #      severity: warning
+      #  - alert: vault-HighResponseTime
+      #    annotations:
+      #      message: The response time of Vault is over 1s on average over the last 5 minutes.
+      #    expr: vault_core_handle_request{quantile="0.5", namespace="mynamespace"} > 1000
+      #    for: 5m
+      #    labels:
+      #      severity: critical
+
+#######
+# Vault UI
+ui:
+  enabled: true
+  serviceType: LoadBalancer
+
+  # enabled: false
+  # serviceType: "ClusterIP"
+  externalTrafficPolicy: Cluster
+  publishNotReadyAddresses: true
+  # The service should only contain selectors for active Vault pod
+  activeVaultPodOnly: false
+  serviceNodePort: null
+  externalPort: 8200
+  targetPort: 8200
+
+  tolerations: |
+    - key: role
+      operator: Equal
+      value: ops
+      effect: NoSchedule
+
+  # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
+  # Example:
+  # nodeSelector:
+  #   beta.kubernetes.io/arch: amd64
+  # nodeSelector: {}
+  nodeSelector:
+    role: ops
+
+  # ingress:
+  #   enabled: true
+  #   hosts:
+  #   - host: vault.supk.xyz
+  #     paths:
+  #     - /
+  # # annotations: {}
+  #   annotations: |
+  #     kubernetes.io/ingress.class: alb
+  #     alb.ingress.kubernetes.io/load-balancer-name: vault-dev
+  #     alb.ingress.kubernetes.io/scheme: internet-facing
+  #     alb.ingress.kubernetes.io/target-type: ip
+  #     alb.ingress.kubernetes.io/subnets: subnet-0fbc809bfc2f2760e, subnet-09ab27b079a2aa375
+  #     alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-2:524542846721:certificate/bb52c420-ccac-415c-9d51-8b42417bc886
+  #     alb.ingress.kubernetes.io/backend-protocol: HTTP
+  #     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+  #     alb.ingress.kubernetes.io/ssl-redirect: '443'
+  # pathType: Prefix
+  # hosts:
+  #   - host: vault.supk.xyz
+  #     paths:
+  #     - /
+
+
+    # annotations: {}
+    #   # |
+    #   # kubernetes.io/ingress.class: nginx
+    #   # kubernetes.io/tls-acme: "true"
+    #   #   or
+    #   # kubernetes.io/ingress.class: nginx
+    #   # kubernetes.io/tls-acme: "true"
+
+    # # Optionally use ingressClassName instead of deprecated annotation.
+    # # See: https://kubernetes.io/docs/concepts/services-networking/ingress/#deprecated-annotation
+    # ingressClassName: ""
+
+    # # As of Kubernetes 1.19, all Ingress Paths must have a pathType configured. The default value below should be sufficient in most cases.
+    # # See: https://kubernetes.io/docs/concepts/services-networking/ingress/#path-types for other possible values.
+    # pathType: Prefix
+
+    # # When HA mode is enabled and K8s service registration is being used,
+    # # configure the ingress to point to the Vault active service.
+    # activeService: true
+    # hosts:
+    #   - host: chart-example.local
+    #     paths: []
+    # ## Extra paths to prepend to the host configuration. This is useful when working with annotation based services.
+    # extraPaths: []
+    # # - path: /*
+    # #   backend:
+    # #     service:
+    # #       name: ssl-redirect
+    # #       port:
+    # #         number: use-annotation
+    # tls: []
+    # #  - secretName: chart-example-tls
+    # #    hosts:
+    # #      - chart-example.local
+#################

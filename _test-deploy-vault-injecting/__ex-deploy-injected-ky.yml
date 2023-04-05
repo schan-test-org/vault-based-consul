@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: test-app-injected-ky
+  name: tested-vault-ky-by-deploy
+  namespace: vault
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: test-app-injected-ky
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-inject-secret-test: secret/test
+        vault.hashicorp.com/agent-inject-status: update
+        vault.hashicorp.com/role: internal-app
+      labels:
+        app: test-app-injected-ky
+    spec:
+      serviceAccountName: vault
+      containers:
+      - image: alpine
+        command:
+          - "sh"
+          - "-c"
+          - "cat /vault/secrets/test && sleep 10000"
+        imagePullPolicy: Always
+        name: app-with-vault-ky
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
