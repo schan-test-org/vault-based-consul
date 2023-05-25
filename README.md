@@ -170,3 +170,5 @@ kubectl exec \
 helm -n vault uninstall vault
 
 ```
+
+### REF > [Vault Manual Guide](https://www.notion.so/Vault-Manual-Guide-7349aa95c31b44b2a2b4e55227a42884?pvs=4)
