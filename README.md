@@ -171,4 +171,4 @@ helm -n vault uninstall vault
 
 ```
 
-### REF > [Vault Manual Guide](https://www.notion.so/Vault-Manual-Guide-7349aa95c31b44b2a2b4e55227a42884?pvs=4)
+### REF > [Vault Manual Guide](https://gravel-haddock-444.notion.site/Vault-Manual-Guide-abf500f95da4407b805b5f1015427c7d?pvs=4)
